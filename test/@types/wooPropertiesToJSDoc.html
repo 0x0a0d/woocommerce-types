@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Woo Properties To JSDoc</title>
+</head>
+<body>
+<div>
+    Run this JS to clear all unnecessary text
+    <blockquote>$('.toc-wrapper,#toc,.dark-box,blockquote,pre').remove()</blockquote>
+</div>
+<div>
+    <textarea id='woo_properties' cols="30" wrap="off" style="width: 70%; height: 300px;"></textarea>
+    <br>
+    <button id="convert">Convert</button>
+</div>
+<script>
+    const prefix_typedef = 'WooCommerce_';
+    function getAttributePermission(property) {
+        const re = /(?:MANDATORY|READ-ONLY|WRITE-ONLY|REQUIRED|\s)+$/g;
+        const m = re.exec(property.description);
+        if (m == null) return;
+        property.permissions = [];
+        ['MANDATORY','READ-ONLY','WRITE-ONLY','REQUIRED'].forEach(attr=>{
+            if (m[0].indexOf(attr) !== -1) property.permissions.push(attr);
+        });
+        property.description = property.description.replace(m[0], '');
+
+    }
+    function getOptions(property) {
+        const re = / Options: ([^.]+)\./;
+        const m = re.exec(property.description);
+        if (m == null) return;
+        property.options = m[1].split(/(?:, *| and )/);
+        property.description = property.description.replace(m[0], '');
+    }
+    function getDefault(property) {
+        const re = / Default is (\S+)\./;
+        const m = re.exec(property.description);
+        if (m == null) return;
+        property.default = m[1];
+        property.description = property.description.replace(m[0], '');
+    }
+    function getLinkProperty(property) {
+        const re = / See (.+) properties/;
+        const m = re.exec(property.description);
+        if (m == null) return;
+        property.link_property = prefix_typedef + m[1].split(/[ -]+/).map(sub=>sub[0].toUpperCase() + sub.substr(1)).join('');
+        property.description = property.description.replace(m[0], '');
+    }
+    function getDescription(property) {
+        if (property.permissions) {
+            property.description = property.permissions.map(permission=>`[${permission}]`).join('') + property.description;
+        }
+    }
+    function propertyProcess(line) {
+        let [name, type, ...description] = line.trim().split('\t');
+        if (name == null || type == null || description == null || name.trim().length === 0 || type.trim().length === 0 || description.length === 0) return null;
+        description = description.join('\t');
+
+        const property = {
+            name, type, description
+        };
+        getAttributePermission(property);
+        getOptions(property);
+        getDefault(property);
+        getLinkProperty(property);
+        getDescription(property);
+
+        if (property.link_property) {
+            if (property.type === 'array') {
+                property.type = `${property.link_property}[]`;
+            } else if (type === 'object') {
+                property.type = property.link_property;
+            } else {
+                console.error(`link_property=${property.link_property} but property.type=${property.type}, type is not object or array`);
+            }
+        }
+        if (property.type === 'integer') property.type = 'number';
+        else if (property.type === 'date-time') property.type = 'Date';
+        else if (property.type === 'bool') property.type = 'boolean';
+        else if (property.type === 'mixed') property.type = '*';
+        else if (property.type === 'array') {
+            if (/ IDs?(?:$|[^a-zA-Z])/i.test(property.description)) property.type = 'number[]';
+            else if (property.options) {
+
+            }
+            else {
+                property.type = 'Array<*>';
+                // console.log(`array type is not defined how to process\ntype=array\nline=${line}`);
+            }
+        }
+        let _name = property.name;
+        let _type = property.type;
+
+        if (property.options) {
+            if (property.type === 'array') {
+                _type = `Array<(${property.options.map(option => `'${option}'`).join('|')})>`;
+            } else {
+                _type = property.options.map(option => `'${option}'`).join(',');
+            }
+        }
+        if (property.default) {
+            if (property.type === 'boolean') _name = `[${_name}=${property.default}]`;
+            else _name = `[${_name}='${property.default}']`;
+        }
+        return ` * @property {${_type}} ${_name} - ${property.description}`;
+    }
+    document.querySelector('#convert').onclick = function () {
+        const element = document.querySelector('#woo_properties');
+        //default_attributes	array	Defaults variation attributes. See Product - Default attributes properties
+        const re = /\r?\n([A-Z].+) properties\r?\nAttribute\tType\tDescription\r?\n((?:(?!\r?\n[A-Z].+ properties\r?\n|\r?\nParameter\tType\tDescription\r?\n)[\s\S])+)/g;
+        const text = '\n' + element.value;
+        if (re.test(text)) {
+            re.lastIndex = 0;
+            let m;
+            const types = [];
+            while (null != (m = re.exec(text))) {
+                const name = prefix_typedef + m[1].split(/[ -]+/).map(sub=>sub[0].toUpperCase() + sub.substr(1)).join('');
+                const properties = m[2].trim().split(/\r?\n/).map(propertyProcess).filter(line=>line).join('\n');
+                types.push(`/**\n * @typedef ${name}\n${properties}\n */`);
+            }
+            element.value = types.join('\n\n');
+        } else {
+            element.value = element.value.trim().split(/\r?\n/).map(propertyProcess).filter(line=>line).join('\n');
+        }
+        element.value = element.value.replace(/CustomersDownloadsFile/g, 'CustomerDownloadsFile');
+    }
+</script>
+</body>
+</html>
